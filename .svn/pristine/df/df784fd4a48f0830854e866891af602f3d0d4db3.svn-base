@@ -1,0 +1,193 @@
+package ca.uwaterloo.lab4_204_46;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Locale;
+
+import android.app.Activity;
+import android.graphics.Color;
+import android.graphics.PointF;
+import android.hardware.Sensor;
+import android.hardware.SensorManager;
+import android.os.Bundle;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import mapper.FloatHelper;
+import mapper.IMapperListener;
+import mapper.MapLoader;
+import mapper.Mapper;
+import mapper.PedometerMap;
+
+public class MainActivity extends Activity implements IMapperListener {
+
+	TextView textViewOfNavigation;
+	TextView textViewOfDirection;
+	Mapper mapView;
+	int next = 0;
+	int count = 0;
+	int angle = 0;
+	int angleDiff = 0;
+	float[] steps = { 0, 0 };
+	Long startTime = 0L;
+	Long endTime = 0L;
+	Button startButton;
+	Button resetButton;
+	boolean start = false;
+	boolean first = true;
+	GraphNode previousLoc;
+	ArrayList<PointF> path;
+	ArrayList<GraphNode> graph;
+	
+	@Override
+	protected void onCreate(Bundle savedInstanceState) {
+
+		super.onCreate(savedInstanceState);
+		setContentView(R.layout.activity_main);
+
+		// Setup Layout
+		LinearLayout layout = (LinearLayout) findViewById(R.id.main);
+		layout.setVisibility(View.VISIBLE);
+		layout.setOrientation(LinearLayout.VERTICAL);
+
+		// Setup Title
+		TextView textViewOfTitle = (TextView) findViewById(R.id.title);
+		textViewOfTitle.setTextSize(20);
+		textViewOfTitle.setText("Navigation");
+		
+		// Setup Map
+		mapView = new Mapper(getApplicationContext(), 900, 900, 35, 35);
+		MapLoader mapLoader = new MapLoader();
+		PedometerMap map = mapLoader.loadMap(getExternalFilesDir(null), "map.svg");
+		mapView.setMap(map);
+		mapView.addListener(this);
+		layout.addView(mapView);
+		registerForContextMenu(mapView);
+		
+		// Setup Graph of the Map
+        GraphNode v1 = new GraphNode(new PointF(3.5f, 18.5f));
+       	GraphNode v2 = new GraphNode(new PointF(5.5f, 18.5f));
+     	GraphNode v3 = new GraphNode(new PointF(12.5f, 18.5f));
+      	GraphNode v4 = new GraphNode(new PointF(19, 18.5f));
+      	GraphNode v5 = new GraphNode(new PointF(19, 5.5f));
+     	GraphNode v6 = new GraphNode(new PointF(20.75f, 19.65f));
+     	v1.addNeighbour(v2);
+     	v2.addNeighbour(v1); v2.addNeighbour(v3);
+     	v3.addNeighbour(v2); v3.addNeighbour(v4);
+     	v4.addNeighbour(v3); v4.addNeighbour(v5); v4.addNeighbour(v6);
+     	v5.addNeighbour(v4); v5.addNeighbour(v6);
+     	v6.addNeighbour(v4); v6.addNeighbour(v5);
+     	graph = new ArrayList<GraphNode>();
+     	graph.add(0, v1); graph.add(1, v2); graph.add(2, v3);
+     	graph.add(3, v4); graph.add(4, v5); graph.add(5, v6);
+     	
+     	// Setup Direction information
+     	textViewOfDirection = new TextView(getApplicationContext());
+     	layout.addView(textViewOfDirection);
+     	String s = String.format(Locale.getDefault(), "Compass: %d - Go This Direction: %d", angle, angle); 
+     	textViewOfDirection.setTextColor(Color.BLACK);
+     	textViewOfDirection.setText(s);
+
+		// Setup Navigation information
+		textViewOfNavigation = new TextView(getApplicationContext());
+		layout.addView(textViewOfNavigation);
+		s = String.format(Locale.getDefault(),
+						  "Steps: %d | North: %.2f | East: %.2f",
+						  count, steps[0], steps[1]);
+		textViewOfNavigation.setTextColor(Color.BLACK);
+		textViewOfNavigation.setText(s);
+		
+		// Setup Start/Pause Button
+		startButton = new Button(getApplicationContext());
+		layout.addView(startButton);
+		startButton.setTextSize(14);
+		startButton.setText("Start");
+		startButton.setOnClickListener(new MyOnClickListener(this, "Start/Pause"));
+		
+		// Setup Reset Button
+		resetButton = new Button(getApplicationContext());
+		layout.addView(resetButton);
+		resetButton.setTextSize(14);
+		resetButton.setText("Reset");
+		resetButton.setOnClickListener(new MyOnClickListener(this, "Reset"));
+		
+		// Setup Sensors
+		SensorManager sensorManager = (SensorManager) getApplicationContext().getSystemService(SENSOR_SERVICE);
+		Sensor gravitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
+		Sensor accelerationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION);
+		Sensor rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+		MySensorEventListener mySensorEventListener = new MySensorEventListener(this);
+		sensorManager.registerListener(mySensorEventListener, gravitySensor, SensorManager.SENSOR_DELAY_FASTEST);
+		sensorManager.registerListener(mySensorEventListener, accelerationSensor, SensorManager.SENSOR_DELAY_FASTEST);
+		sensorManager.registerListener(mySensorEventListener, rotationSensor, SensorManager.SENSOR_DELAY_FASTEST);
+
+	}
+	
+	@Override
+	public void onCreateContextMenu(android.view.ContextMenu menu, View v, android.view.ContextMenu.ContextMenuInfo menuInfo) {
+		super.onCreateContextMenu(menu, v, menuInfo);
+		mapView.onCreateContextMenu(menu, v, menuInfo);
+	};
+	
+	@Override
+	public boolean onContextItemSelected(MenuItem item) {
+		return super.onContextItemSelected(item) || mapView.onContextItemSelected(item);
+	};
+
+	@Override
+	public boolean onCreateOptionsMenu(Menu menu) {
+		// Inflate the menu; this adds items to the action bar if it is present.
+		getMenuInflater().inflate(R.menu.main, menu);
+		return true;
+	}
+
+	@Override
+	public boolean onOptionsItemSelected(MenuItem item) {
+		// Handle action bar item clicks here. The action bar will
+		// automatically handle clicks on the Home/Up button, so long
+		// as you specify a parent activity in AndroidManifest.xml.
+		int id = item.getItemId();
+		if (id == R.id.action_settings) {
+			return true;
+		}
+		return super.onOptionsItemSelected(item);
+	}
+	
+	@Override
+	public void locationChanged(Mapper source, PointF loc) {
+		source.setUserPoint(loc);
+	}
+	
+	@Override
+	public void DestinationChanged(Mapper source, PointF dest) {
+		path = new ArrayList<PointF>();
+		PointF start = source.getStartPoint(); PointF end = source.getEndPoint();
+		if (source.calculateIntersections(start, end).isEmpty()) {
+			path.add(0, start); path.add(1, end);
+			source.setUserPath(path);
+		}
+		else {
+			GraphNode startNode = RouteFinder.addNode(graph, start);
+			GraphNode endNode = RouteFinder.addNode(graph, end);
+			ArrayList<GraphNode> nodePath = RouteFinder.findRoute(graph, startNode, endNode);
+			for (int i = 0; i < nodePath.size(); i++) {
+				path.add(i, nodePath.get(i).getPos());
+			}
+			Collections.reverse(path);
+			source.setUserPath(path);
+		}
+        PointF p1 = path.get(1);
+        PointF p2 = new PointF(p1.x, p1.y + 1);
+        if ((mapView.getUserPoint().x - p1.x) > 0) {
+        	float temp = FloatHelper.angleBetween(p1, p2, mapView.getUserPoint());
+        	angleDiff = ((int) Math.toDegrees(temp) + 180) % 360;
+        }
+        else {
+        	float temp = FloatHelper.angleBetween(p1, p2, mapView.getUserPoint());
+        	angleDiff = 360 - ((int) Math.toDegrees(temp) + 180) % 360;
+        }
+	}
+}
